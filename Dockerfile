@@ -20,5 +20,4 @@ RUN apk add --no-cache ca-certificates git
 
 COPY --from=builder /plugin /plugin
 
-USER nobody
 ENTRYPOINT ["/plugin"]
