@@ -1,0 +1,14 @@
+when:
+  - event: pull_request
+
+steps:
+  claude-pr-review:
+    image: ghcr.io/vcheesbrough/claude-pr-agent:latest
+    pull: true
+    environment:
+      GITHUB_TOKEN:
+        from_secret: github_token
+      CLAUDE_OAUTH_TOKEN:
+        from_secret: claude_oauth_token
+    commands:
+      - node /app/index.js
