@@ -64,14 +64,17 @@ func TestCandidateImageStarts(t *testing.T) {
 		t.Skip("PLUGIN_IMAGE not set")
 	}
 
-	cmd := exec.Command("docker", "run", "--rm", image, "validate")
-	cmd.Env = append(os.Environ(),
-		"CI_COMMIT_SHA="+headSHA(t),
-		"CI_REPO="+envOr("GITHUB_REPOSITORY", "vcheesbrough/woodpecker-plugin-release-versions"),
-		"PLUGIN_GITHUB_TOKEN="+os.Getenv("GITHUB_TOKEN"),
-		"PLUGIN_MAJOR_MINOR_SOURCE=go",
-		"PLUGIN_MAJOR_MINOR_FILE=internal/version/version.go",
-		"CI_COMMIT_BRANCH=main",
+	root := repoRoot(t)
+	cmd := exec.Command("docker", "run", "--rm",
+		"-v", root+":/workspace", "-w", "/workspace",
+		"-e", "PLUGIN_MODE=validate",
+		"-e", "CI_COMMIT_SHA="+headSHA(t),
+		"-e", "CI_REPO="+envOr("GITHUB_REPOSITORY", "vcheesbrough/woodpecker-plugin-release-versions"),
+		"-e", "PLUGIN_GITHUB_TOKEN="+os.Getenv("GITHUB_TOKEN"),
+		"-e", "PLUGIN_MAJOR_MINOR_SOURCE=go",
+		"-e", "PLUGIN_MAJOR_MINOR_FILE=internal/version/version.go",
+		"-e", "CI_COMMIT_BRANCH=main",
+		image,
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

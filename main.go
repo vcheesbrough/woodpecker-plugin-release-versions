@@ -17,9 +17,9 @@ func main() {
 	)
 
 	if len(os.Args) > 1 {
-		mode, err := cliMode(os.Args[1])
-		if err != nil {
-			log.Fatal(err)
+		mode, parseErr := cliMode(os.Args[1])
+		if parseErr != nil {
+			log.Fatal(parseErr)
 		}
 		cfg, err = config.FromCLI(mode, os.Args[2:])
 	} else {
