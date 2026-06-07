@@ -27,9 +27,9 @@ Then:
 | `publish` | Result |
 |---|---|
 | **false** | Candidate only (`:rc-<RELEASE_TAG>`). No `:latest`, git tag, or GitHub Release. |
-| **true** | Must run from the repo **default branch** (`master`). Promote to `:<RELEASE_TAG>` + `:latest`, plugin `push-tag`, GitHub Release. |
+| **true** | Promote to `:<RELEASE_TAG>` + `:latest`, plugin `push-tag`, GitHub Release. |
 
-Typical flow: `publish=false` from a feature branch to validate, merge, then `publish=true` from `master`.
+Typical flow: `publish=false` to validate a candidate, then `publish=true` when the enclosing pipeline decides to ship. Branch and environment gates belong in that pipeline — not in this workflow or the plugin.
 
 ## CI (GitHub Actions)
 
