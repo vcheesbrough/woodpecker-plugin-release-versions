@@ -3,6 +3,7 @@ package plugin
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/vcheesbrough/woodpecker-plugin-release-versions/internal/artifacts"
@@ -158,8 +159,7 @@ func runValidate(cfg types.Config) error {
 }
 
 func createAnnotatedTag(cfg types.Config, tag, message string) error {
-	cmd := exec.Command(
-		"git",
+	cmd := gitLocalCommand(cfg,
 		"-c", "user.name=woodpecker-plugin-release-versions",
 		"-c", "user.email=woodpecker@localhost",
 		"tag", "-a", tag, cfg.CommitSHA, "-m", message,
@@ -173,12 +173,22 @@ func createAnnotatedTag(cfg types.Config, tag, message string) error {
 
 func pushTag(cfg types.Config, tag string) error {
 	url := fmt.Sprintf("https://x-token:%s@github.com/%s.git", cfg.GitHubToken, cfg.Repo)
-	cmd := exec.Command("git", "push", url, tag)
+	cmd := gitLocalCommand(cfg, "push", url, tag)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git push tag failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
+}
+
+func gitLocalCommand(cfg types.Config, args ...string) *exec.Cmd {
+	cmdArgs := append([]string{"-c", "safe.directory=*"}, args...)
+	cmd := exec.Command("git", cmdArgs...)
+	cmd.Dir = cfg.OutputDir
+	if abs, err := filepath.Abs(cmd.Dir); err == nil {
+		cmd.Dir = abs
+	}
+	return cmd
 }
 
 func defaultString(value, fallback string) string {
