@@ -27,13 +27,13 @@ Then:
 | `publish` | Result |
 |---|---|
 | **false** | Candidate only (`:rc-<RELEASE_TAG>`). No `:latest`, git tag, or GitHub Release. |
-| **true** | Must run from **main**. Promote to `:<RELEASE_TAG>` + `:latest`, plugin `push-tag`, GitHub Release. |
+| **true** | Must run from the repo **default branch** (`master`). Promote to `:<RELEASE_TAG>` + `:latest`, plugin `push-tag`, GitHub Release. |
 
-Typical flow: `publish=false` from a feature branch to validate, merge, then `publish=true` from `main`.
+Typical flow: `publish=false` from a feature branch to validate, merge, then `publish=true` from `master`.
 
 ## CI (GitHub Actions)
 
-On PR and push to `main`: `go test ./...` and multi-arch docker build (no push).
+On PR and push to `master`: `go test ./...` and multi-arch docker build (no push).
 
 Woodpecker is used for **PR review** only.
 
