@@ -10,8 +10,19 @@ import (
 )
 
 func ListRemoteTags(cfg types.Config) ([]types.RemoteTag, error) {
-	url := fmt.Sprintf("https://x-token:%s@github.com/%s.git", cfg.GitHubToken, cfg.Repo)
-	out, err := exec.Command("git", "ls-remote", "--tags", "--refs", url).CombinedOutput()
+	return listRemoteTags(fmt.Sprintf("https://x-token:%s@github.com/%s.git", cfg.GitHubToken, cfg.Repo))
+}
+
+// listRemoteTags takes any git URL or local repository path, so tests can drive
+// the real `git ls-remote` against a local bare repository.
+//
+// No `--refs`: it suppresses the peeled `refs/tags/<name>^{}` lines, and for an
+// annotated tag (the only kind runPushTag creates) that line is the only one
+// carrying the commit SHA — the plain ref points at the tag object. Without it
+// TagForCommit never matches a released commit. parseLsRemote folds the peeled
+// SHA back onto the tag.
+func listRemoteTags(url string) ([]types.RemoteTag, error) {
+	out, err := exec.Command("git", "ls-remote", "--tags", url).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("git ls-remote failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
