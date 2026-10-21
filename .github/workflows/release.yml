@@ -68,6 +68,12 @@ jobs:
           platforms: linux/amd64
           build-args: |
             RELEASE_TAG=${{ needs.compute.outputs.release_tag }}
+          # source links the ghcr package to this repo; version and revision
+          # are the labels the plugin itself checks.
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.compute.outputs.release_tag }}
+            org.opencontainers.image.revision=${{ github.sha }}
           tags: ${{ steps.meta.outputs.candidate_tag }}
 
   e2e:
@@ -136,4 +142,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.compute.outputs.release_tag }}
+          # body goes above the generated notes
+          body: |
+            **Image:** [`ghcr.io/${{ github.repository }}:${{ needs.compute.outputs.release_tag }}`](https://github.com/${{ github.repository }}/pkgs/container/${{ github.event.repository.name }})
+
+            ```
+            docker pull ghcr.io/${{ github.repository }}:${{ needs.compute.outputs.release_tag }}
+            ```
           generate_release_notes: true
