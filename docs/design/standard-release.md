@@ -109,7 +109,7 @@ Implementation notes:
 - Registry reads use the registry API (go-containerregistry), so `resolve` needs no docker socket. `publish` needs the socket because the image is in the agent's daemon.
 - `resolve` writes `.release-tag` only after every check passes.
 - The GitHub token goes in a git HTTP header, never the URL.
-- Build refs live outside `refs/tags`, so they never show in GitHub tags or releases and plain clones do not fetch them. Pruning is optional (a line only needs its highest ref kept).
+- Build refs live outside `refs/tags`, so they never show in GitHub tags or releases and plain clones do not fetch them. They are never pruned: the counter needs the highest ref on each line, `resolve` needs a commit's ref to find an untagged build, and even 15,000 refs a year costs little.
 - **Same-commit race:** each build ref points at its own small annotated tag object (commit, branch, pipeline), not straight at the commit. Git skips the create-only lease check when a push would leave a ref at the value it already has, so two builds of one commit claiming the same number could otherwise both succeed. Found while prototyping and verified against a real git remote.
 
 ## A donor pipeline afterwards
