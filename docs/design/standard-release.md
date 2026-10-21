@@ -18,6 +18,7 @@ Decisions (all made by Vincent):
 5. **No `:commit-<sha>` docker tags:** a deploy finds a commit's build through git build refs.
 6. **Stay on Woodpecker 3.15** (3.19 release notes checked; nothing here needs it). Its button is Deploy and fires the `deployment` event.
 7. **Must remain usable from GitHub Actions** if a repo moves (see below).
+8. **The plugin enforces the rules; an agent-shared skill teaches them.** Agents wire, change and operate these pipelines, so they need the contract before they touch a pipeline, not after a refusal (see "Agent skill").
 
 ## Where the donors are today
 
@@ -183,6 +184,30 @@ All state lives in git and the registry; the plugin is a container reading envir
 | Share `.release-tag` | shared workspace | job `outputs:`, or each job re-runs `resolve` |
 | Build, dev, prod | three runs | one workflow, three jobs with `needs:`; GitHub Environments give an approval gate before prod |
 
+## Agent skill (agent-shared)
+
+The plugin refuses bad releases, but only at run time. An agent that does not know the rules hand-writes a tag, rebuilds to deploy or edits a patch number, and finds out when CI fails. A shared skill, `release-flow`, gives agents the contract before they act. It ships with plugin 0.2.0 in `agent-shared/skills/release-flow/`, next to `ci-watch` and `observability`.
+
+| Part | Holds |
+| --- | --- |
+| Load when | Wiring or changing a repo's build or deploy pipeline; adding an image or environment; deploying a version; answering which version runs where; migrating a repo; taking a product to `1.0.0`. |
+| The contract | The Semantics rules in agent terms: one build per push, promote and never rebuild, the first successful deploy writes the tag, the plugin owns `PATCH`. |
+| Never | Create, move or delete a release tag or `refs/builds/*` by hand; set `PATCH` in a manifest; rebuild or retag an image to deploy it; push `:latest` or `:commit-<sha>`; tag on push; let `tag` run before the smoke tests. |
+| Pipeline templates | `references/woodpecker-build.yml`, `references/woodpecker-deploy.yml`, `references/github-actions.yml`: the donor pipelines above, pinned to a plugin version. |
+| Operating it | Deploy = a Woodpecker deployment for a commit and target, then `ci-watch` on that pipeline. Which version is where: `git tag --points-at <sha>` for deployed, `git ls-remote origin 'refs/builds/*'` for built. |
+| Refusals | Each `version`, `publish`, `resolve` and `tag` refusal, with its cause and fix (no green build, branch not allowed, second tag, revision label mismatch, image pruned). Plugin error messages name the section to read. |
+| Migrating a repo | Checklist: delete the repo's release scripts, add the two pipeline files, set `environments`, keep existing tags, prove it with `dry_run` on a branch. |
+
+What stays out of the skill: the settings reference (the plugin README, linked at the pinned version, so the two cannot disagree) and per-repo facts such as image names and environments (the repo's own `AGENTS.md`).
+
+The skill also changes three existing agent-shared files, in the same commit:
+
+| File | Today | Becomes |
+| --- | --- | --- |
+| `global/AGENTS.md` §2 | Patch "resets to 0 at iteration start and bumps only on the active branch"; MVP "set the workspace to `1.0.0` and tag it". | The manifest carries `MAJOR.MINOR.0`; the plugin assigns `PATCH` per build. The `1.0.0` tag is written by that build's first deploy, never by hand. |
+| `global/AGENTS.md` §10 | Lists `api-versioning`, `observability`. | Adds `release-flow`. |
+| `skills/start-iteration` step 7 | "Patch resets to `0` at iteration start." | Set the manifest to `0.N.0` / `1.N.0`; patch numbers come from builds, so a feature branch builds `0.N.x` while trunk is still on `0.(N-1).x`. |
+
 ## Templating (considered, deferred)
 
 Woodpecker has no cross-repo `template:`/`extends:`. Options: YAML anchors (one file only), a configuration extension (`WOODPECKER_CONFIG_EXTENSION_ENDPOINT`, an HTTP service returning pipeline YAML; separate from the sovereign-config broker, which is a secret extension on `WOODPECKER_SECRET_EXTENSION_ENDPOINT`), or plugins. This design stops at the plugin.
@@ -190,10 +215,11 @@ Woodpecker has no cross-repo `template:`/`extends:`. Options: YAML anchors (one 
 ## Migration plan
 
 1. **Plugin 0.2.0.** Four modes with tests ported from the donors' script tests. Remove `compute` and `validate`. Update this repo's own release workflow (it uses `compute`).
-2. **code-vitals.** Proves `version` + `publish` with pyproject.
-3. **bored.** Proves `resolve` + `tag` on dev and prod.
-4. **sovereign-config.** Proves multiple images; moves from `-ci` repositories to one release repository per image, and to tag-on-deploy.
-5. **v-note.** Proves multiple workflows agreeing on one version; moves to tag-on-deploy.
+2. **agent-shared `release-flow` skill.** Written against 0.2.0, with the baseline §2, §10 and `start-iteration` changes. Committed to agent-shared `main` (its own rule: no branch). Every repo migration below is done by following it, and whatever a migration finds missing goes back into the skill.
+3. **code-vitals.** Proves `version` + `publish` with pyproject.
+4. **bored.** Proves `resolve` + `tag` on dev and prod.
+5. **sovereign-config.** Proves multiple images; moves from `-ci` repositories to one release repository per image, and to tag-on-deploy.
+6. **v-note.** Proves multiple workflows agreeing on one version; moves to tag-on-deploy.
 
 Existing tags stay valid: a commit tagged under an old rule counts as already deployed.
 
@@ -202,6 +228,7 @@ Existing tags stay valid: a commit tagged under an old rule counts as already de
 - v-note and sovereign-config lose "tagged = passed CI". Is that signal used anywhere?
 - Merge style (merge, rebase, squash)? Squash means a dev-tested branch build can never itself be promoted to prod.
 - Should code-vitals get a deploy file now?
+- May agents start deployments, and to which targets? The Woodpecker MCP has no deploy action, so it would take `woodpecker-cli` and a token. If prod stays human-only, the skill says so and stops at "ready to deploy".
 - Registry retention in zot: `resolve` fails loudly if a tagged build has been pruned. Old `:commit-<sha>` tags can be cleared by retention.
 
 ## Prototype
