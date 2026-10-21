@@ -1,6 +1,6 @@
 # Standard build, release and promotion design
 
-Status: design agreed with Vincent on 2026-10-21. No implementation yet.
+Status: design agreed with Vincent on 2026-10-21. Plugin 0.2.0 implemented on `feat/standard-release-modes`; not yet applied to any repo.
 Living copy (with comments): https://claude.ai/artifact/FPZcFvSt4MzgNaUctRoKCg
 
 Donor repos: bored, v-note, sovereign-config, code-vitals.
@@ -231,6 +231,6 @@ Existing tags stay valid: a commit tagged under an old rule counts as already de
 - May agents start deployments, and to which targets? The Woodpecker MCP has no deploy action, so it would take `woodpecker-cli` and a token. If prod stays human-only, the skill says so and stops at "ready to deploy".
 - Registry retention in zot: `resolve` fails loudly if a tagged build has been pruned. Old `:commit-<sha>` tags can be cleared by retention.
 
-## Prototype
+## Implementation (0.2.0)
 
-A paused, unreviewed draft of 0.2.0 (modes, config, git ref claims, registry client, tests for config/git/manifest parsing) exists as a patch outside the repo. Mode-level tests (`version`, `resolve`, `tag`, `publish`), the GitHub Actions adapter and `action.yml` are not written.
+All four modes, the `environments` setting, `pyproject`, the GitHub Actions adapter (`INPUT_*` and `GITHUB_*` fallbacks, `release_tag` step output) and `action.yml` are implemented. Mode tests drive real git against local bare repositories, including six concurrent builds of one commit racing for numbers; registry tests run against an in-memory registry API. Still unverified: that GitHub returns peeled `^{}` lines for refs under `refs/builds` (git itself does, on protocols v0 and v2), which the first real claim will show.

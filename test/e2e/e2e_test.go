@@ -13,48 +13,30 @@ import (
 )
 
 func TestReadGoReleaseLineFromRepo(t *testing.T) {
-	t.Helper()
-
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(filename), "../.."))
-	path := filepath.Join(repoRoot, "internal", "version", "version.go")
+	path := filepath.Join(repoRoot(t), "internal", "version", "version.go")
 
 	major, minor, err := majorminor.Read("go", path)
 	if err != nil {
 		t.Fatalf("read go version file: %v", err)
 	}
-	if major != 0 || minor != 1 {
-		t.Fatalf("expected release line 0.1.x, got %d.%d", major, minor)
+	if major != 0 || minor != 2 {
+		t.Fatalf("expected release line 0.2.x, got %d.%d", major, minor)
 	}
 }
 
-func TestValidateAgainstRemote(t *testing.T) {
+// A dry-run version reads the real GitHub remote, including the peeled lines of
+// refs outside refs/tags, without claiming anything.
+func TestVersionDryRunAgainstRemote(t *testing.T) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
 		t.Skip("GITHUB_TOKEN not set")
 	}
-
-	repo := os.Getenv("GITHUB_REPOSITORY")
-	if repo == "" {
-		repo = "vcheesbrough/woodpecker-plugin-release-versions"
-	}
-
-	cmd := exec.Command("go", "run", ".", "validate")
+	cmd := exec.Command("go", "run", ".", "version")
 	cmd.Dir = repoRoot(t)
-	cmd.Env = append(os.Environ(),
-		"CI_COMMIT_SHA="+headSHA(t),
-		"CI_REPO="+repo,
-		"PLUGIN_GITHUB_TOKEN="+token,
-		"PLUGIN_MAJOR_MINOR_SOURCE=go",
-		"PLUGIN_MAJOR_MINOR_FILE=internal/version/version.go",
-		"CI_COMMIT_BRANCH=main",
-	)
+	cmd.Env = append(os.Environ(), pluginEnv(t, token)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("validate failed: %v\n%s", err, out)
+		t.Fatalf("version dry run failed: %v\n%s", err, out)
 	}
 }
 
@@ -63,22 +45,25 @@ func TestCandidateImageStarts(t *testing.T) {
 	if image == "" {
 		t.Skip("PLUGIN_IMAGE not set")
 	}
-
-	root := repoRoot(t)
-	cmd := exec.Command("docker", "run", "--rm",
-		"-v", root+":/workspace", "-w", "/workspace",
-		"-e", "PLUGIN_MODE=validate",
-		"-e", "CI_COMMIT_SHA="+headSHA(t),
-		"-e", "CI_REPO="+envOr("GITHUB_REPOSITORY", "vcheesbrough/woodpecker-plugin-release-versions"),
-		"-e", "PLUGIN_GITHUB_TOKEN="+os.Getenv("GITHUB_TOKEN"),
-		"-e", "PLUGIN_MAJOR_MINOR_SOURCE=go",
-		"-e", "PLUGIN_MAJOR_MINOR_FILE=internal/version/version.go",
-		"-e", "CI_COMMIT_BRANCH=main",
-		image,
-	)
-	out, err := cmd.CombinedOutput()
+	args := []string{"run", "--rm", "-v", repoRoot(t) + ":/workspace", "-w", "/workspace", "-e", "PLUGIN_MODE=version"}
+	for _, kv := range pluginEnv(t, os.Getenv("GITHUB_TOKEN")) {
+		args = append(args, "-e", kv)
+	}
+	out, err := exec.Command("docker", append(args, image)...).CombinedOutput()
 	if err != nil {
-		t.Fatalf("candidate image validate failed: %v\n%s", err, out)
+		t.Fatalf("candidate image version dry run failed: %v\n%s", err, out)
+	}
+}
+
+func pluginEnv(t *testing.T, token string) []string {
+	return []string{
+		"CI_COMMIT_SHA=" + headSHA(t),
+		"CI_REPO=" + envOr("GITHUB_REPOSITORY", "vcheesbrough/woodpecker-plugin-release-versions"),
+		"CI_PIPELINE_NUMBER=e2e",
+		"CI_COMMIT_BRANCH=master",
+		"PLUGIN_GITHUB_TOKEN=" + token,
+		"PLUGIN_MAJOR_MINOR_SOURCE=go",
+		"PLUGIN_DRY_RUN=true",
 	}
 }
 

@@ -7,7 +7,7 @@ This repository releases through **GitHub Actions** and dogfoods **woodpecker-pl
 Bump `internal/version/version.go` when starting a new iteration:
 
 ```go
-const Version = "0.2.0" // MAJOR.MINOR.PATCH placeholder; deploy owns patch
+const Version = "0.3.0" // MAJOR.MINOR.0; the plugin owns the patch
 ```
 
 The plugin reads **MAJOR.MINOR** from that file (`major_minor_source: go`).
@@ -18,7 +18,7 @@ Go to **Actions → release → Run workflow** and set **publish**:
 
 Shared steps:
 
-1. **compute** — plugin allocates or reuses `RELEASE_TAG`
+1. **compute** — plugin mode `version` claims the next `RELEASE_TAG` on the line (`refs/builds/<tag>`)
 2. **build-candidate** — build with burn-in, push `:rc-<RELEASE_TAG>`
 3. **e2e** — tagged tests + candidate image smoke
 
@@ -27,22 +27,12 @@ Then:
 | `publish` | Result |
 |---|---|
 | **false** | Candidate only (`:rc-<RELEASE_TAG>`). No `:latest`, git tag, or GitHub Release. |
-| **true** | Promote to `:<RELEASE_TAG>` + `:latest`, plugin `push-tag`, GitHub Release. |
+| **true** | Promote to `:<RELEASE_TAG>` + `:latest`, plugin `tag`, GitHub Release. |
 
-Typical flow: `publish=false` to validate a candidate, then `publish=true` when the enclosing pipeline decides to ship. Branch and environment gates belong in that pipeline — not in this workflow or the plugin.
+Each run claims its own number, so a `publish=false` run followed by a `publish=true` run releases the second run's number; the first is a gap.
 
 ## CI (GitHub Actions)
 
-On PR and push to `master`: `go test ./...` and multi-arch docker build (no push).
+On PR and push to `master`: `go test ./...` and an amd64 docker build (no push).
 
 Woodpecker is used for **PR review** only.
-
-## Pipeline vs plugin
-
-The plugin does **not** know about dev/prod environments. Each project's pipeline decides:
-
-- when to call `compute` vs `push-tag`
-- branch and environment gates (e.g. bored's `validate-deployment` step)
-- whether a deploy pushes a candidate image or the release tag
-
-The plugin only allocates semver, writes artifacts, and pushes git tags when invoked.

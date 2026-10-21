@@ -1,19 +1,10 @@
 # woodpecker-plugin-release-versions
 
-Woodpecker CI plugin that allocates deploy semver tags, writes workspace artifacts for docker burn-in, and pushes matching git tags after deploy.
+Woodpecker CI plugin for one build per push, promoted unchanged to every environment. Each build claims the next version on its line; the first successful deploy writes the git tag, so a commit is pinned to one build forever.
 
 [![CI](https://github.com/vcheesbrough/woodpecker-plugin-release-versions/actions/workflows/ci.yml/badge.svg)](https://github.com/vcheesbrough/woodpecker-plugin-release-versions/actions/workflows/ci.yml)
 
-## Why this exists
-
-Release identity should be consistent across git, docker, and compiled binaries:
-
-- At most **one semver per commit** (reuse on re-deploy or dev-then-prod promotion)
-- **Git tag string == docker tag string**
-- **Version computed before build** so `RELEASE_TAG` can be burned in
-- **Git tag pushed after deploy** succeeds
-
-This replaces inline shell in project pipelines (for example bored's `compute-version` / `tag-release` steps).
+The design and its reasoning: [docs/design/standard-release.md](docs/design/standard-release.md).
 
 ## License
 
@@ -21,110 +12,164 @@ Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). This
 
 **Commercial use** requires a separate license. See [LICENSE-TIER.md](LICENSE-TIER.md).
 
+## Rules
+
+- **Version** = `MAJOR.MINOR` from the manifest + a gap-free patch counter per line. A build claims its number by creating `refs/builds/<version>` on the remote, which refuses an existing name, so racing builds never share one. A failed build uses its number up.
+- **Build** = one push pipeline, one version, images published as `<image>:<version>` only, after every test is green. A version is published once and never overwritten.
+- **Deploy** = a Woodpecker deployment. It never builds: it deploys the commit's tagged build, else the newest published build of the commit.
+- **Git tag** = "this build was deployed". Written once the deploy steps succeed, whatever smoke tests later find; never moved, never a second one on a commit.
+- **Order is free**: dev before prod, after it, or not at all. Whichever deploys first writes the tag; every later deploy reuses that build.
+
 ## Modes
 
-| `mode` | When | Action |
+| `mode` | Runs on | Does |
 |---|---|---|
-| `compute` | Before `docker build` | Read release line, allocate or reuse `RELEASE_TAG`, write workspace files |
-| `push-tag` | After deploy succeeds | Create/push annotated git tag matching `.release-tag` |
-| `validate` | Optional | Check manifest and remote tag policy |
+| `version` | push, manual | Reads `MAJOR.MINOR`, claims the next number (retrying on a clash), writes `.release-tag`. Workflows of one pipeline share one number. Refuses deployment events. |
+| `publish` | push, manual, after tests | Checks each local `<image>:<version>` carries the right version and revision labels and is not yet in the registry, then pushes them all. Needs the docker socket. |
+| `resolve` | deployment | Checks the target and branch against `environments`, finds the commit's release tag or newest published build, verifies the image labels, writes `.release-tag`. Needs no docker socket. |
+| `tag` | deployment, after the deploy steps | Pushes the annotated git tag; a no-op if the commit already has it. `push-tag` is an alias. |
 
-## Major/minor sources
+`compute` and `validate` were removed in 0.2.0.
 
-| `major_minor_source` | Reads | Default file |
+## Settings
+
+| Setting | Used by | Default |
 |---|---|---|
-| `go` | `const Version = "x.y.z"` in a Go file | `internal/version/version.go` |
-| `cargo` | `[workspace.package].version` or `[package].version` | `Cargo.toml` |
+| `mode` | all | required |
+| `major_minor_source` | version | required: `cargo`, `go`, or `pyproject` |
+| `major_minor_file` | version | `Cargo.toml`, `internal/version/version.go`, `pyproject.toml` |
+| `images` | publish, resolve | required: image names without a tag |
+| `registry_username`, `registry_password` | publish, resolve | anonymous |
+| `environments` | resolve | `{dev: {}, prod: {branches: [main]}}` |
+| `github_token` | version, resolve, tag | required |
+| `tag_prefix` | all | `""` |
+| `dry_run` | all | `false`: read and check, change nothing |
+| `output_dir` | all | `.`: the workspace checkout, where `.release-tag` lives |
+| `deploy_target` | resolve, tag | `CI_PIPELINE_DEPLOY_TARGET` |
+| `git_remote` | version, resolve, tag | `https://github.com/<CI_REPO>.git` |
+| `registry_insecure` | publish, resolve | `false`: allow plain-HTTP registries |
 
-Patch in the manifest is a placeholder; deploy tooling owns the patch digit from remote tags.
+`environments` maps each deploy target to the branches allowed to deploy there (`path.Match` globs; none = any branch). A target not listed is refused. There is deliberately no ordering option.
 
-## Woodpecker settings
+Images must carry `org.opencontainers.image.version=<version>` and `org.opencontainers.image.revision=<commit sha>` labels.
 
-| Setting | Env var | Required | Default |
-|---|---|---|---|
-| `mode` | `PLUGIN_MODE` | yes | — |
-| `major_minor_source` | `PLUGIN_MAJOR_MINOR_SOURCE` | yes | — |
-| `major_minor_file` | `PLUGIN_MAJOR_MINOR_FILE` | no | source-specific |
-| `github_token` | `PLUGIN_GITHUB_TOKEN` | yes | — |
-| `tag_prefix` | `PLUGIN_TAG_PREFIX` | no | `""` |
-| `output_dir` | `PLUGIN_OUTPUT_DIR` | no | `.` |
-| `dry_run` | `PLUGIN_DRY_RUN` | no | `false` |
+The token travels in a git HTTP header, never in a URL or on a command line.
 
-Woodpecker also provides `CI_COMMIT_SHA`, `CI_REPO`, `CI_COMMIT_BRANCH`, and `CI_PIPELINE_NUMBER` for tag messages.
+## Pipelines
 
-**Environment policy** (dev vs prod, branch gates, when to git-tag) belongs in your pipeline — not in this plugin.
-
-### Workspace outputs (`compute`)
-
-| File | Example |
-|---|---|
-| `.release-tag` | `0.1.4` |
-| `.release-tag-reused` | `true` / `false` |
-| `.release-tag-major-minor` | `0.1` |
-
-### Example — Rust consumer (bored)
+The version travels between steps in `.release-tag`; read it with `$(cat .release-tag)`.
 
 ```yaml
-  validate-deployment:
-    # branch / target checks live here — not in the plugin
-
-  compute-version:
-    image: ghcr.io/vcheesbrough/woodpecker-plugin-release-versions:0.1.4
+# .woodpecker/build.yml
+when:
+  - event: [push, manual]
+steps:
+  version:
+    image: ghcr.io/vcheesbrough/woodpecker-plugin-release-versions:0.2.0
     settings:
-      mode: compute
+      mode: version
       major_minor_source: cargo
-      github_token:
-        from_secret: github_token
-
-  tag-release:
-    when:
-      - event: deployment
-        # invoke only when your pipeline should record a git tag
-    image: ghcr.io/vcheesbrough/woodpecker-plugin-release-versions:0.1.4
+      github_token: { from_secret: github_token }
+  build:
+    image: docker:cli
+    volumes: [/var/run/docker.sock:/var/run/docker.sock]
+    commands:
+      - >
+        docker build -t registry.example/app:$(cat .release-tag)
+        --build-arg RELEASE_TAG=$(cat .release-tag)
+        --label org.opencontainers.image.version=$(cat .release-tag)
+        --label org.opencontainers.image.revision=$CI_COMMIT_SHA .
+  test:             # repo-specific
+    depends_on: [build]
+  publish:
+    depends_on: [test]
+    image: ghcr.io/vcheesbrough/woodpecker-plugin-release-versions:0.2.0
+    volumes: [/var/run/docker.sock:/var/run/docker.sock]
     settings:
-      mode: push-tag
-      major_minor_source: cargo
-      github_token:
-        from_secret: github_token
+      mode: publish
+      images: [registry.example/app]
+      registry_username: { from_secret: registry_user }
+      registry_password: { from_secret: registry_password }
 ```
-
-### Example — Go consumer (this repo)
 
 ```yaml
-  compute-version:
-    image: ghcr.io/vcheesbrough/woodpecker-plugin-release-versions:0.1.4
+# .woodpecker/deploy.yml
+when:
+  - event: deployment
+steps:
+  resolve:
+    image: ghcr.io/vcheesbrough/woodpecker-plugin-release-versions:0.2.0
     settings:
-      mode: compute
-      major_minor_source: go
-      major_minor_file: internal/version/version.go
-      github_token:
-        from_secret: github_token
+      mode: resolve
+      images: [registry.example/app]
+      environments:      # optional; this is the default
+        dev: {}
+        prod: { branches: [main] }
+      github_token: { from_secret: github_token }
+      registry_username: { from_secret: registry_user }
+      registry_password: { from_secret: registry_password }
+  deploy-dev:       # repo-specific, deploys registry.example/app:$(cat .release-tag)
+    depends_on: [resolve]
+    when: [{ evaluate: 'CI_PIPELINE_DEPLOY_TARGET == "dev"' }]
+  deploy-prod:      # repo-specific
+    depends_on: [resolve]
+    when: [{ evaluate: 'CI_PIPELINE_DEPLOY_TARGET == "prod"' }]
+  tag:
+    depends_on: [deploy-dev, deploy-prod]
+    image: ghcr.io/vcheesbrough/woodpecker-plugin-release-versions:0.2.0
+    settings:
+      mode: tag
+      github_token: { from_secret: github_token }
+  smoke:            # repo-specific; beside tag: a failure fails the pipeline, never the tag
+    depends_on: [deploy-dev, deploy-prod]
 ```
 
-Downstream steps read `$(cat .release-tag)` for docker build/push.
+A pipeline with several workflows (for example web and android) runs `version` in each; they find the number their pipeline already claimed.
 
-## Dogfooding
+## GitHub Actions
 
-This repo releases through **GitHub Actions** (like `woodpecker-plugin-authentik-blueprint`) and runs the plugin inside the release workflow for `compute` and `push-tag`. See [RELEASING.md](RELEASING.md).
+The repo is also a container action. Settings become `with:` inputs, GitHub's own variables replace Woodpecker's (`GITHUB_SHA`, `GITHUB_REPOSITORY`, `GITHUB_REF_NAME`, `GITHUB_RUN_ID`), and the version is also a `release_tag` step output.
 
-In that workflow, **publish=false** leaves a candidate (`:rc-<tag>`) only; **publish=true** promotes, tags git, and creates the GitHub Release.
+```yaml
+- id: version
+  uses: vcheesbrough/woodpecker-plugin-release-versions@0.2.0
+  with:
+    mode: version
+    major_minor_source: go
+    github_token: ${{ secrets.GITHUB_TOKEN }}   # needs contents: write
+```
 
-Woodpecker is used for PR review only.
+For a deploy job, pass `deploy_target: ${{ job.environment }}` style values explicitly; GitHub Environments give the approval gate before prod.
+
+## Refusals
+
+| Message | Cause | Fix |
+|---|---|---|
+| `has no published build; push a fix or re-run the build` | Every build of the commit failed before `publish` | Push a fix or re-run the build pipeline |
+| `is not in environments` / `may not deploy to` | Target or branch outside `environments` | Deploy from an allowed branch, or change `environments` |
+| `more than one release tag` | The commit was tagged twice under an older scheme | Delete the wrong tag by hand, deliberately |
+| `no longer in the registry (pruned?)` | The tagged build was removed from the registry | Restore the image; a commit cannot change version |
+| `label … want …` | An image was published from another build | Check what pushed that image; never retag to fix it |
+| `already published` | The version is in the registry already | A build ran publish twice; investigate, do not overwrite |
+| `already has release tag` / `tags never move` | Deploying a different version than the commit carries | Deploy through `resolve`, never a hand-written `.release-tag` |
+| `registry cannot answer` | Registry down or credentials wrong | Fix the registry; nothing is assumed missing |
 
 ## Development
 
 ```bash
-go test ./...
+go test ./...                       # unit and mode tests, real git against local bare repos
+go test -tags=e2e ./test/e2e/...    # dry runs against GitHub (needs GITHUB_TOKEN)
 docker build -t ghcr.io/vcheesbrough/woodpecker-plugin-release-versions:local .
 ```
 
-Local CLI:
+Local CLI (dry run):
 
 ```bash
-PLUGIN_MODE=compute \
-CI_COMMIT_SHA=abc123 \
+PLUGIN_MODE=version PLUGIN_DRY_RUN=true \
+CI_COMMIT_SHA=$(git rev-parse HEAD) CI_PIPELINE_NUMBER=local \
 CI_REPO=vcheesbrough/woodpecker-plugin-release-versions \
-PLUGIN_GITHUB_TOKEN=... \
-PLUGIN_MAJOR_MINOR_SOURCE=go \
-go run . compute
+PLUGIN_GITHUB_TOKEN=... PLUGIN_MAJOR_MINOR_SOURCE=go \
+go run .
 ```
+
+This repo releases itself through GitHub Actions; see [RELEASING.md](RELEASING.md).

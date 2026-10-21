@@ -1,0 +1,41 @@
+name: release-versions
+description: One build per push, promoted unchanged; the first deploy writes the git tag.
+inputs:
+  mode:
+    description: version (build), publish (build, after tests), resolve (deploy), or tag (deploy, after the deploy steps)
+    required: true
+  github_token:
+    description: Token with contents write access (version, tag) or read access (resolve)
+    required: false
+  major_minor_source:
+    description: cargo, go, or pyproject (version)
+    required: false
+  major_minor_file:
+    description: Manifest path; defaults per source
+    required: false
+  images:
+    description: Comma-separated image names without a tag (publish, resolve)
+    required: false
+  registry_username:
+    required: false
+  registry_password:
+    required: false
+  environments:
+    description: JSON map of deploy targets to {"branches":[...]}; default dev from any branch, prod from main
+    required: false
+  deploy_target:
+    description: The environment being deployed (resolve, tag); usually the job's environment name
+    required: false
+  tag_prefix:
+    required: false
+  dry_run:
+    required: false
+  output_dir:
+    description: Workspace holding the checkout and .release-tag
+    required: false
+outputs:
+  release_tag:
+    description: The version claimed (version) or resolved (resolve)
+runs:
+  using: docker
+  image: Dockerfile

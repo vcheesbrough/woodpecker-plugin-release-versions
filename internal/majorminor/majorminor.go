@@ -18,8 +18,10 @@ func Read(source, path string) (major, minor uint64, err error) {
 		return readCargo(path)
 	case "go":
 		return readGoVersionFile(path)
+	case "pyproject":
+		return readPyproject(path)
 	default:
-		return 0, 0, fmt.Errorf("unsupported major_minor_source %q; supported: cargo, go", source)
+		return 0, 0, fmt.Errorf("unsupported major_minor_source %q; supported: cargo, go, pyproject", source)
 	}
 }
 
@@ -53,6 +55,30 @@ func cargoVersionString(doc map[string]any) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("Cargo.toml: no [workspace.package].version or [package].version")
+}
+
+func readPyproject(path string) (uint64, uint64, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0, fmt.Errorf("major_minor_file %s: not found", path)
+	}
+	var doc map[string]any
+	if err := toml.Unmarshal(raw, &doc); err != nil {
+		return 0, 0, fmt.Errorf("%s: invalid TOML: %w", path, err)
+	}
+	if project, ok := doc["project"].(map[string]any); ok {
+		if v, ok := project["version"].(string); ok && v != "" {
+			return parseMajorMinor(v)
+		}
+	}
+	if tool, ok := doc["tool"].(map[string]any); ok {
+		if poetry, ok := tool["poetry"].(map[string]any); ok {
+			if v, ok := poetry["version"].(string); ok && v != "" {
+				return parseMajorMinor(v)
+			}
+		}
+	}
+	return 0, 0, fmt.Errorf("%s: no [project].version or [tool.poetry].version", path)
 }
 
 func readGoVersionFile(path string) (uint64, uint64, error) {

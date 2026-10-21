@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
 
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates git
+RUN apk add --no-cache ca-certificates git docker-cli
 
 COPY --from=builder /plugin /plugin
 
