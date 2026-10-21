@@ -52,3 +52,33 @@ func TestReadGoVersionRejectsPrerelease(t *testing.T) {
 		t.Fatal("expected error for pre-release version")
 	}
 }
+
+func TestReadPyproject(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"pep621": "[project]\nname = \"code-vitals\"\nversion = \"0.4.0\"\n",
+		"poetry": "[tool.poetry]\nname = \"code-vitals\"\nversion = \"0.4.0\"\n",
+	} {
+		path := filepath.Join(dir, name+".toml")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		major, minor, err := Read("pyproject", path)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if major != 0 || minor != 4 {
+			t.Fatalf("%s: got %d.%d", name, major, minor)
+		}
+	}
+}
+
+func TestReadPyprojectWithoutVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pyproject.toml")
+	if err := os.WriteFile(path, []byte("[project]\nname = \"x\"\ndynamic = [\"version\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Read("pyproject", path); err == nil {
+		t.Fatal("expected an error for a dynamic version")
+	}
+}

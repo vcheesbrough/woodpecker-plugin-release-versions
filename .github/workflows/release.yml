@@ -13,7 +13,7 @@ jobs:
   compute:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # mode version claims refs/builds/<version>
     outputs:
       release_tag: ${{ steps.release.outputs.release_tag }}
     steps:
@@ -25,13 +25,14 @@ jobs:
           context: .
           load: true
           tags: release-versions:runner
-      - name: Compute RELEASE_TAG
+      - name: Claim RELEASE_TAG
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           docker run --rm \
             -v "$PWD:/workspace" -w /workspace \
-            -e PLUGIN_MODE=compute \
+            -e PLUGIN_MODE=version \
+            -e CI_PIPELINE_NUMBER="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             -e CI_COMMIT_SHA="${GITHUB_SHA}" \
             -e CI_REPO="${GITHUB_REPOSITORY}" \
             -e PLUGIN_GITHUB_TOKEN="${GITHUB_TOKEN}" \
@@ -52,7 +53,6 @@ jobs:
       candidate_tag: ${{ steps.meta.outputs.candidate_tag }}
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -65,9 +65,16 @@ jobs:
         with:
           context: .
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           build-args: |
             RELEASE_TAG=${{ needs.compute.outputs.release_tag }}
+          # source links the ghcr package to this repo; version and revision
+          # follow the plugin's own label convention (this workflow never runs
+          # publish, so nothing checks them here).
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.compute.outputs.release_tag }}
+            org.opencontainers.image.revision=${{ github.sha }}
           tags: ${{ steps.meta.outputs.candidate_tag }}
 
   e2e:
@@ -126,15 +133,21 @@ jobs:
           echo "${{ needs.compute.outputs.release_tag }}" > .release-tag
           docker run --rm \
             -v "$PWD:/workspace" -w /workspace \
-            -e PLUGIN_MODE=push-tag \
+            -e PLUGIN_MODE=tag \
             -e CI_COMMIT_SHA="${GITHUB_SHA}" \
             -e CI_REPO="${GITHUB_REPOSITORY}" \
             -e PLUGIN_GITHUB_TOKEN="${GITHUB_TOKEN}" \
-            -e PLUGIN_MAJOR_MINOR_SOURCE=go \
             -e CI_COMMIT_BRANCH="${GITHUB_REF_NAME}" \
             release-versions:runner
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.compute.outputs.release_tag }}
+          # body goes above the generated notes
+          body: |
+            **Image:** [`ghcr.io/${{ github.repository }}:${{ needs.compute.outputs.release_tag }}`](https://github.com/${{ github.repository }}/pkgs/container/${{ github.event.repository.name }})
+
+            ```
+            docker pull ghcr.io/${{ github.repository }}:${{ needs.compute.outputs.release_tag }}
+            ```
           generate_release_notes: true
