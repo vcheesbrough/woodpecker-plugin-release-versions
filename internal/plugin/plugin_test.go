@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/vcheesbrough/woodpecker-plugin-release-versions/internal/artifacts"
-	"github.com/vcheesbrough/woodpecker-plugin-release-versions/internal/config"
 	"github.com/vcheesbrough/woodpecker-plugin-release-versions/internal/registry"
 	"github.com/vcheesbrough/woodpecker-plugin-release-versions/internal/testgit"
 	"github.com/vcheesbrough/woodpecker-plugin-release-versions/internal/types"
@@ -85,7 +84,6 @@ func baseConfig(repo *testgit.Repo, mode types.Mode) types.Config {
 		MajorMinorFile:   filepath.Join(repo.Work, "Cargo.toml"),
 		OutputDir:        repo.Work,
 		Images:           []string{image},
-		Environments:     config.DefaultEnvironments(),
 	}
 }
 
@@ -277,6 +275,49 @@ func TestResolveFollowsTheTagInEitherOrder(t *testing.T) {
 	}
 }
 
+// The default prod rule follows the repo's trunk, whether main or master.
+func TestResolveDefaultProdFollowsTheDefaultBranch(t *testing.T) {
+	repo := testgit.New(t)
+	setLine(t, repo, "1.0.0")
+	repo.Git(repo.Work, "push", "-q", repo.Remote, "main:master")
+	repo.Git(repo.Remote, "symbolic-ref", "HEAD", "refs/heads/master")
+	reg := newFakeRegistry()
+	reg.add(build(t, repo, "1"), repo.Commit)
+
+	cfg := deployCfg(repo, types.ModeResolve, "prod")
+	cfg.Branch = "main"
+	if err := runResolve(cfg, reg); err == nil || !strings.Contains(err.Error(), "set environments to change") {
+		t.Fatalf("main on a master-trunk repo: got %v", err)
+	}
+	cfg.Branch = "master"
+	if err := runResolve(cfg, reg); err != nil {
+		t.Fatalf("master on a master-trunk repo: %v", err)
+	}
+
+	// Woodpecker names the default branch itself; no remote lookup needed.
+	cfg.DefaultBranch = "main"
+	cfg.Branch = "main"
+	if err := runResolve(cfg, reg); err != nil {
+		t.Fatalf("CI_REPO_DEFAULT_BRANCH=main: %v", err)
+	}
+}
+
+// If the git server omits `^{}` lines, resolve must say so rather than report
+// that the commit has no build.
+func TestRequirePeeledBuilds(t *testing.T) {
+	unpeeled := []types.Ref{{Name: "refs/tags/1.0.0", SHA: "c1"}, {Name: "refs/builds/1.0.1", SHA: "tagobj"}}
+	if err := requirePeeledBuilds(unpeeled); err == nil || !strings.Contains(err.Error(), "without peeled") {
+		t.Fatalf("got %v", err)
+	}
+	mixed := append(unpeeled, types.Ref{Name: "refs/builds/1.0.2", SHA: "tagobj2", Peeled: "c2"})
+	if err := requirePeeledBuilds(mixed); err != nil {
+		t.Fatalf("one peeled build ref proves the server peels: %v", err)
+	}
+	if err := requirePeeledBuilds(nil); err != nil {
+		t.Fatalf("no build refs at all: %v", err)
+	}
+}
+
 func TestResolveRefusals(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -285,7 +326,7 @@ func TestResolveRefusals(t *testing.T) {
 	}{
 		{"unknown target", func(_ *testing.T, _ *testgit.Repo, _ *fakeRegistry, cfg *types.Config) {
 			cfg.DeployTarget = "staging"
-		}, "not in environments"},
+		}, "is not in the default environments"},
 		{"branch not allowed", func(_ *testing.T, _ *testgit.Repo, _ *fakeRegistry, cfg *types.Config) {
 			cfg.DeployTarget = "prod"
 			cfg.Branch = "feat/x"
@@ -334,14 +375,13 @@ func TestResolveRefusals(t *testing.T) {
 
 func TestTagPushesOnceAndIsIdempotent(t *testing.T) {
 	repo := testgit.New(t)
-	if err := artifacts.WriteReleaseTag(repo.Work, "1.2.3", ""); err != nil {
-		t.Fatal(err)
-	}
+	setLine(t, repo, "1.2.0")
+	build(t, repo, "1") // 1.2.0, now in .release-tag
 	cfg := deployCfg(repo, types.ModeTag, "dev")
 	if err := runTag(cfg); err != nil {
 		t.Fatal(err)
 	}
-	obj := repo.RemoteRefs()["refs/tags/1.2.3"]
+	obj := repo.RemoteRefs()["refs/tags/1.2.0"]
 	if obj == "" {
 		t.Fatal("tag not pushed")
 	}
@@ -351,7 +391,7 @@ func TestTagPushesOnceAndIsIdempotent(t *testing.T) {
 	if err := runTag(cfg); err != nil {
 		t.Fatalf("redeploy: %v", err)
 	}
-	if got := repo.RemoteRefs()["refs/tags/1.2.3"]; got != obj {
+	if got := repo.RemoteRefs()["refs/tags/1.2.0"]; got != obj {
 		t.Fatal("redeploy moved the tag")
 	}
 }
@@ -374,6 +414,23 @@ func TestTagRefusesASecondVersionOrAMovedTag(t *testing.T) {
 	}
 	if err := runTag(cfg); err == nil || !strings.Contains(err.Error(), "never move") {
 		t.Fatalf("moving a tag: got %v", err)
+	}
+}
+
+// A stale or hand-written .release-tag naming another commit's build must not
+// pin this commit to it.
+func TestTagRefusesAnotherCommitsBuild(t *testing.T) {
+	repo := testgit.New(t)
+	setLine(t, repo, "1.2.0")
+	version := build(t, repo, "1") // a build of the first commit
+
+	cfg := deployCfg(repo, types.ModeTag, "dev")
+	cfg.CommitSHA = repo.NewCommit("second")
+	if err := runTag(cfg); err == nil || !strings.Contains(err.Error(), "is not a build of commit") {
+		t.Fatalf("got %v", err)
+	}
+	if _, ok := repo.RemoteRefs()["refs/tags/"+version]; ok {
+		t.Fatal("tagged the second commit with the first commit's build")
 	}
 }
 

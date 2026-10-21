@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/vcheesbrough/woodpecker-plugin-release-versions/internal/artifacts"
+	"github.com/vcheesbrough/woodpecker-plugin-release-versions/internal/config"
 	"github.com/vcheesbrough/woodpecker-plugin-release-versions/internal/registry"
 	"github.com/vcheesbrough/woodpecker-plugin-release-versions/internal/release"
 	"github.com/vcheesbrough/woodpecker-plugin-release-versions/internal/types"
@@ -19,16 +20,32 @@ func runResolve(cfg types.Config, reg Registry) error {
 	if err := requireDeployment(cfg); err != nil {
 		return err
 	}
-	env, ok := cfg.Environments[cfg.DeployTarget]
+	remote := remoteFor(cfg)
+	envs, source := cfg.Environments, "environments"
+	if envs == nil {
+		trunk := cfg.DefaultBranch
+		if trunk == "" {
+			var err error
+			if trunk, err = remote.DefaultBranch(); err != nil {
+				return fmt.Errorf("finding the default branch for the default environments: %w", err)
+			}
+		}
+		envs = config.DefaultEnvironments(trunk)
+		source = "the default environments (set environments to change)"
+	}
+	env, ok := envs[cfg.DeployTarget]
 	if !ok {
-		return fmt.Errorf("deploy target %q is not in environments (have: %s)", cfg.DeployTarget, targetNames(cfg.Environments))
+		return fmt.Errorf("deploy target %q is not in %s (have: %s)", cfg.DeployTarget, source, targetNames(envs))
 	}
 	if !branchAllowed(env.Branches, cfg.Branch) {
-		return fmt.Errorf("branch %q may not deploy to %s (allowed: %s)", cfg.Branch, cfg.DeployTarget, strings.Join(env.Branches, ", "))
+		return fmt.Errorf("branch %q may not deploy to %s under %s (allowed: %s)", cfg.Branch, cfg.DeployTarget, source, strings.Join(env.Branches, ", "))
 	}
 
-	refs, err := remoteFor(cfg).ListRefs(release.TagsPrefix+"*", release.BuildsPrefix+"*")
+	refs, err := remote.ListRefs(release.TagsPrefix+"*", release.BuildsPrefix+"*")
 	if err != nil {
+		return err
+	}
+	if err := requirePeeledBuilds(refs); err != nil {
 		return err
 	}
 
@@ -95,6 +112,27 @@ func allPublished(cfg types.Config, reg Registry, version string) (bool, error) 
 		}
 	}
 	return true, nil
+}
+
+// requirePeeledBuilds fails loudly when the remote lists build refs but peels
+// none of them. Every build ref points at a tag object, so without the `^{}`
+// lines no build can be matched to its commit, and every deploy would
+// misleadingly report "no published build".
+func requirePeeledBuilds(refs []types.Ref) error {
+	builds := 0
+	for _, ref := range refs {
+		if !strings.HasPrefix(ref.Name, release.BuildsPrefix) {
+			continue
+		}
+		if ref.Peeled != "" {
+			return nil
+		}
+		builds++
+	}
+	if builds > 0 {
+		return fmt.Errorf("the remote listed %d build refs without peeled ^{} lines, so builds cannot be matched to commits; this git server is not supported", builds)
+	}
+	return nil
 }
 
 func targetNames(envs map[string]types.Environment) string {

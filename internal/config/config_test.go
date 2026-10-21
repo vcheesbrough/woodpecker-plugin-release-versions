@@ -72,8 +72,8 @@ func TestEnvironmentsDefaultAndCustom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cfg.Environments, DefaultEnvironments()) {
-		t.Fatalf("default environments: got %#v", cfg.Environments)
+	if cfg.Environments != nil {
+		t.Fatalf("unset environments must stay nil until resolve knows the trunk, got %#v", cfg.Environments)
 	}
 
 	t.Setenv("PLUGIN_ENVIRONMENTS", `{"dev":{},"staging":{"branches":["main","release/*"]}}`)
@@ -121,6 +121,7 @@ func TestGitHubActionsFallbacks(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
 	t.Setenv("GITHUB_REF_NAME", "main")
 	t.Setenv("GITHUB_RUN_ID", "991")
+	t.Setenv("GITHUB_RUN_ATTEMPT", "2")
 	t.Setenv("INPUT_GITHUB_TOKEN", "tok")
 	t.Setenv("INPUT_MAJOR_MINOR_SOURCE", "go")
 
@@ -128,7 +129,7 @@ func TestGitHubActionsFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.CommitSHA != "def456" || cfg.Branch != "main" || cfg.PipelineID != "991" || cfg.GitHubToken != "tok" {
+	if cfg.CommitSHA != "def456" || cfg.Branch != "main" || cfg.PipelineID != "991-2" || cfg.GitHubToken != "tok" {
 		t.Fatalf("GitHub fallbacks not applied: %#v", cfg)
 	}
 	if cfg.GitRemote != "https://github.com/owner/repo.git" {

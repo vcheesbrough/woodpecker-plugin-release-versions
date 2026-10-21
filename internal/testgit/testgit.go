@@ -28,6 +28,7 @@ func New(t *testing.T) *Repo {
 	r.Git(dir, "init", "-q", "-b", "main", r.Work)
 	r.Commit = r.NewCommit("first")
 	r.Git(r.Work, "push", "-q", r.Remote, "main")
+	r.Git(r.Remote, "symbolic-ref", "HEAD", "refs/heads/main")
 	return r
 }
 

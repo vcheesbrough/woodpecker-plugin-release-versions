@@ -42,7 +42,7 @@ One rule ties it together: a commit runs under exactly one version, chosen by it
 | Deploy | A manual Woodpecker deployment to a target. Never builds. Resolves the build, verifies the revision label equals the commit, runs the repo's deploy steps, then tags. |
 | Resolve | Commit has a release tag → deploy that version. Otherwise take the commit's build refs, newest first, and deploy the first whose image is in the registry (failed builds never published, so are skipped). More than one tag on a commit is an error. |
 | Git tag | Annotated tag `<version>`, byte-identical to the docker tag, pushed once the deploy steps succeed, whatever the smoke tests later find. Idempotent on redeploy; refuses a second tag on a commit or a tag moving commits. |
-| Prod | Only from allowed branches (default `main`). Dev is optional and may come before or after prod. Whichever deploys the commit first takes its latest green build and writes the tag; every later deploy, dev or prod, reuses that build through the tag. |
+| Prod | Only from allowed branches (default: the repo's default branch, `main` or `master`). Dev is optional and may come before or after prod. Whichever deploys the commit first takes its latest green build and writes the tag; every later deploy, dev or prod, reuses that build through the tag. |
 | Feature branches | May deploy to any pre-prod target; that tags the branch commit. With merge commits or fast-forward, prod can promote the same build; a squash merge makes a new commit needing its own build. |
 
 ## How steps share the version
@@ -97,7 +97,7 @@ publish if green              never rebuilt  │   (either order, or only one)  
 | `major_minor_file` | version | per source | `Cargo.toml` |
 | `images` (new) | publish, resolve | required | `[registry.desync.link/sovereign-config, registry.desync.link/sovereign-config-cli]` |
 | `registry_username`, `registry_password` (new) | publish, resolve | required | from_secret |
-| `environments` (new) | resolve | `dev` any branch, `prod` from `main` | `{dev: {}}` for v-note; `{dev: {}, staging: {branches: [main]}, prod: {branches: [main]}}`; only `branches` per entry, deliberately no ordering option |
+| `environments` (new) | resolve | `dev` any branch, `prod` from the repo's default branch | `{dev: {}}` for v-note; `{dev: {}, staging: {branches: [main]}, prod: {branches: [main]}}`; only `branches` per entry, deliberately no ordering option |
 | `github_token` | version, resolve, tag | required | from_secret |
 | `tag_prefix`, `dry_run` | all | `""`, `false` | |
 
@@ -148,7 +148,7 @@ steps:
     settings:
       mode: resolve
       images: [registry.desync.link/bored]
-      environments:      # optional; this is the default
+      environments:      # optional; omit for dev from any branch, prod from the repo's default branch
         dev: {}
         prod: { branches: [main] }
       github_token: { from_secret: github_token }

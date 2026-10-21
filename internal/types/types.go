@@ -33,7 +33,8 @@ type Config struct {
 	RegistryUsername string
 	RegistryPassword string
 	RegistryInsecure bool
-	Environments     map[string]Environment
+	Environments     map[string]Environment // nil: the default, built from DefaultBranch
+	DefaultBranch    string
 	GitHubOutput     string
 }
 

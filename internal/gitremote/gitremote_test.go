@@ -1,6 +1,9 @@
 package gitremote
 
 import (
+	"encoding/base64"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/vcheesbrough/woodpecker-plugin-release-versions/internal/testgit"
@@ -97,5 +100,49 @@ func TestRedactHidesToken(t *testing.T) {
 	r := Remote{Token: "s3cret"}
 	if got := r.redact("fatal: bad header s3cret"); got != "fatal: bad header ***" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestCommandScopesTheTokenAndKeepsInheritedConfig(t *testing.T) {
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "http.sslVerify")
+	t.Setenv("GIT_CONFIG_VALUE_0", "true")
+	r := Remote{URL: "https://github.com/owner/repo.git", Token: "s3cret"}
+	cmd := r.command("", "ls-remote", r.URL)
+
+	for _, arg := range cmd.Args {
+		if strings.Contains(arg, "s3cret") {
+			t.Fatalf("token in argv: %v", cmd.Args)
+		}
+	}
+	want := []string{
+		"GIT_CONFIG_COUNT=2",
+		"GIT_CONFIG_KEY_1=http.https://github.com/owner/repo.git.extraHeader",
+		"GIT_CONFIG_VALUE_1=Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:s3cret")),
+	}
+	for _, kv := range want {
+		if !slices.Contains(cmd.Env, kv) {
+			t.Errorf("missing %s", kv)
+		}
+	}
+	// exec keeps the last duplicate, so the appended count is the one git sees,
+	// and the inherited entry 0 is still there.
+	if !slices.Contains(cmd.Env, "GIT_CONFIG_KEY_0=http.sslVerify") {
+		t.Error("inherited GIT_CONFIG_KEY_0 was dropped")
+	}
+	for _, kv := range cmd.Env {
+		if strings.HasPrefix(kv, "GIT_CONFIG_KEY_") && strings.HasSuffix(kv, "=http.extraHeader") {
+			t.Errorf("unscoped header: %s", kv)
+		}
+	}
+}
+
+func TestCommandWithoutTokenAddsNoHeader(t *testing.T) {
+	t.Setenv("GIT_CONFIG_COUNT", "")
+	cmd := Remote{URL: "https://github.com/owner/repo.git"}.command("", "ls-remote")
+	for _, kv := range cmd.Env {
+		if strings.HasPrefix(kv, "GIT_CONFIG_COUNT=") && kv != "GIT_CONFIG_COUNT=" {
+			t.Fatalf("set %s without a token", kv)
+		}
 	}
 }

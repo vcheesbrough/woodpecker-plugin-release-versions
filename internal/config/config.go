@@ -11,11 +11,12 @@ import (
 )
 
 // DefaultEnvironments applies when a repo sets no `environments`: dev from any
-// branch, prod from main.
-func DefaultEnvironments() map[string]types.Environment {
+// branch, prod from the repo's default branch (main or master, whichever the
+// repo uses).
+func DefaultEnvironments(defaultBranch string) map[string]types.Environment {
 	return map[string]types.Environment{
 		"dev":  {},
-		"prod": {Branches: []string{"main"}},
+		"prod": {Branches: []string{defaultBranch}},
 	}
 }
 
@@ -54,7 +55,7 @@ func build(mode types.Mode) (types.Config, error) {
 		Branch:           ci("CI_COMMIT_BRANCH", "GITHUB_REF_NAME"),
 		Event:            envFirst("CI_PIPELINE_EVENT"),
 		DeployTarget:     firstNonEmpty(setting("DEPLOY_TARGET"), envFirst("CI_PIPELINE_DEPLOY_TARGET")),
-		PipelineID:       ci("CI_PIPELINE_NUMBER", "GITHUB_RUN_ID"),
+		PipelineID:       firstNonEmpty(envFirst("CI_PIPELINE_NUMBER"), githubRun(gha)),
 		MajorMinorSource: setting("MAJOR_MINOR_SOURCE"),
 		MajorMinorFile:   setting("MAJOR_MINOR_FILE"),
 		TagPrefix:        setting("TAG_PREFIX"),
@@ -65,6 +66,7 @@ func build(mode types.Mode) (types.Config, error) {
 		RegistryPassword: setting("REGISTRY_PASSWORD"),
 		RegistryInsecure: isTrue(setting("REGISTRY_INSECURE")),
 		GitHubOutput:     envFirst("GITHUB_OUTPUT"),
+		DefaultBranch:    envFirst("CI_REPO_DEFAULT_BRANCH"),
 	}
 	if cfg.MajorMinorFile == "" {
 		cfg.MajorMinorFile = defaultMajorMinorFile(cfg.MajorMinorSource)
@@ -138,10 +140,11 @@ func ParseMode(raw string) (types.Mode, error) {
 
 // parseEnvironments reads the `environments` setting. Woodpecker hands a YAML
 // map to the plugin as JSON; unknown keys are refused so a typo cannot
-// silently drop a branch rule.
+// silently drop a branch rule. Unset returns nil: resolve builds the default
+// once it knows the repo's default branch.
 func parseEnvironments(raw string) (map[string]types.Environment, error) {
 	if strings.TrimSpace(raw) == "" {
-		return DefaultEnvironments(), nil
+		return nil, nil
 	}
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -184,6 +187,17 @@ func defaultMajorMinorFile(source string) string {
 	default:
 		return ""
 	}
+}
+
+// githubRun keys a GitHub run by id and attempt. The run id survives a
+// re-run, so without the attempt a re-run would reuse the version its first
+// attempt claimed and could never publish it again.
+func githubRun(gha bool) string {
+	id := envFirst("GITHUB_RUN_ID")
+	if !gha || id == "" {
+		return ""
+	}
+	return id + "-" + firstNonEmpty(envFirst("GITHUB_RUN_ATTEMPT"), "1")
 }
 
 func setting(name string) string {

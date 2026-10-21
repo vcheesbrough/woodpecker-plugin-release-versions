@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,7 +23,9 @@ type Remote struct {
 
 // command runs git with the token in an HTTP header passed through
 // GIT_CONFIG_* environment variables: never in the URL, where git echoes it in
-// errors, and never in argv, where any process listing shows it.
+// errors, and never in argv, where any process listing shows it. The header is
+// scoped to the remote's URL, so a redirect or another host never receives
+// it, and it is appended after any GIT_CONFIG_* entries CI already set.
 func (r Remote) command(dir string, args ...string) *exec.Cmd {
 	cmd := exec.Command("git", append([]string{"-c", "safe.directory=*"}, args...)...)
 	if dir != "" {
@@ -33,11 +36,12 @@ func (r Remote) command(dir string, args ...string) *exec.Cmd {
 	}
 	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if r.Token != "" {
+		n, _ := strconv.Atoi(os.Getenv("GIT_CONFIG_COUNT"))
 		basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + r.Token))
 		env = append(env,
-			"GIT_CONFIG_COUNT=1",
-			"GIT_CONFIG_KEY_0=http.extraHeader",
-			"GIT_CONFIG_VALUE_0=Authorization: Basic "+basic,
+			fmt.Sprintf("GIT_CONFIG_COUNT=%d", n+1),
+			fmt.Sprintf("GIT_CONFIG_KEY_%d=http.%s.extraHeader", n, r.URL),
+			fmt.Sprintf("GIT_CONFIG_VALUE_%d=Authorization: Basic %s", n, basic),
 		)
 	}
 	cmd.Env = env
@@ -72,6 +76,24 @@ func (r Remote) ListRefs(patterns ...string) ([]types.Ref, error) {
 		return nil, err
 	}
 	return ParseLsRemote(out), nil
+}
+
+// DefaultBranch asks the remote which branch its HEAD names.
+func (r Remote) DefaultBranch() (string, error) {
+	out, err := r.run("", "", "ls-remote", "--symref", r.URL, "HEAD")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		target, ref, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if !ok || ref != "HEAD" {
+			continue
+		}
+		if branch, ok := strings.CutPrefix(target, "ref: refs/heads/"); ok {
+			return branch, nil
+		}
+	}
+	return "", fmt.Errorf("remote %s does not name a default branch", r.URL)
 }
 
 // ParseLsRemote folds each `<ref>^{}` line onto its ref as Peeled.

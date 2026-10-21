@@ -32,7 +32,7 @@ jobs:
           docker run --rm \
             -v "$PWD:/workspace" -w /workspace \
             -e PLUGIN_MODE=version \
-            -e CI_PIPELINE_NUMBER="${GITHUB_RUN_ID}" \
+            -e CI_PIPELINE_NUMBER="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             -e CI_COMMIT_SHA="${GITHUB_SHA}" \
             -e CI_REPO="${GITHUB_REPOSITORY}" \
             -e PLUGIN_GITHUB_TOKEN="${GITHUB_TOKEN}" \

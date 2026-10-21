@@ -25,12 +25,19 @@ func runTag(cfg types.Config) error {
 	}
 
 	remote := remoteFor(cfg)
-	refs, err := remote.ListRefs(release.TagsPrefix + "*")
+	// The trailing * keeps the `^{}` line, the only one naming the build's
+	// commit; an exact pattern drops it.
+	refs, err := remote.ListRefs(release.TagsPrefix+"*", release.BuildsPrefix+version+"*")
 	if err != nil {
 		return err
 	}
 	if done, err := checkTag(cfg, refs, version); done || err != nil {
 		return err
+	}
+	// Tags never move, so a version built from another commit must never land
+	// here: resolve trusts a tagged commit to ship that version.
+	if !slices.Contains(release.BuildsForCommit(refs, cfg.CommitSHA, cfg.TagPrefix), version) {
+		return fmt.Errorf("%s is not a build of commit %s; refusing to tag it (let resolve write .release-tag)", version, cfg.CommitSHA)
 	}
 
 	if cfg.DryRun {

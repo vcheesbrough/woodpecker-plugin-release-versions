@@ -40,7 +40,7 @@ Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). This
 | `major_minor_file` | version | `Cargo.toml`, `internal/version/version.go`, `pyproject.toml` |
 | `images` | publish, resolve | required: image names without a tag |
 | `registry_username`, `registry_password` | publish, resolve | anonymous |
-| `environments` | resolve | `{dev: {}, prod: {branches: [main]}}` |
+| `environments` | resolve | dev from any branch, prod from the repo's default branch (`CI_REPO_DEFAULT_BRANCH`, else the remote's `HEAD`) |
 | `github_token` | version, resolve, tag | required |
 | `tag_prefix` | all | `""` |
 | `dry_run` | all | `false`: read and check, change nothing |
@@ -102,7 +102,7 @@ steps:
     settings:
       mode: resolve
       images: [registry.example/app]
-      environments:      # optional; this is the default
+      environments:      # optional; omit for dev from any branch, prod from the repo's default branch
         dev: {}
         prod: { branches: [main] }
       github_token: { from_secret: github_token }
@@ -128,7 +128,7 @@ A pipeline with several workflows (for example web and android) runs `version` i
 
 ## GitHub Actions
 
-The repo is also a container action. Settings become `with:` inputs, GitHub's own variables replace Woodpecker's (`GITHUB_SHA`, `GITHUB_REPOSITORY`, `GITHUB_REF_NAME`, `GITHUB_RUN_ID`), and the version is also a `release_tag` step output.
+The repo is also a container action. Settings become `with:` inputs, GitHub's own variables replace Woodpecker's (`GITHUB_SHA`, `GITHUB_REPOSITORY`, `GITHUB_REF_NAME`, `GITHUB_RUN_ID`), and the version is also a `release_tag` step output. Each run attempt claims its own number; when several jobs share one version, use "Re-run all jobs", since "Re-run failed jobs" gives only the re-run jobs a new number.
 
 ```yaml
 - id: version
