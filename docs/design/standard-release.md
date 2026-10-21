@@ -66,20 +66,17 @@ Tests stay in each repo; the plugin fixes the two gates around them.
 
 Its claimed number is used up (1.69.8 is never handed out again) but nothing is published, so nothing can deploy it. A commit with no green build is refused with "push a fix or re-run the build". The next attempt claims 1.69.9; gaps mark failed builds.
 
-## Build, deploy dev, deploy prod in Woodpecker
+## Build, then deploy dev and prod in Woodpecker
 
-Woodpecker has no gated multi-stage run like Azure DevOps. The equivalent is three runs: the push pipeline (build), Deploy with target `dev`, Deploy with target `prod`. The artifact is handed on through the registry and the git tag, keyed on the commit, so it does not matter which pipeline is promoted.
+Woodpecker has no gated multi-stage run like Azure DevOps. The equivalent is up to three runs: the push pipeline (build), then Deploy with target `dev` and Deploy with target `prod`, in either order or only one. The artifact is handed on through the registry and the git tag, keyed on the commit, so it does not matter which pipeline is promoted.
 
 ```
-            writes tag            reads tag
-              ┌──── Git tag 1.69.7 (pins the commit) ────┐
-              │                                          ▼
- 1. Build ──► 2. Deploy dev (optional, any branch) ──► 3. Deploy prod (main)
-    version     resolve: tag, else build ref             resolve: tag, else build ref
-    test        deploy same image                        deploy same image
-    publish     push tag                                 push tag if not there
-      │              ▲                                        ▲
-      └── publish ── Registry: app:1.69.7, built once ── pull ┘
+Build                         Registry       ┌─► Deploy dev  (optional, any branch) ─┐
+version 1.69.7                app:1.69.7     │   resolve: tag, else build ref        │
+build, test once ──publish──► built once,  ──┤                                       ├──► Git tag 1.69.7
+publish if green              never rebuilt  │   (either order, or only one)         │    first deploy writes it,
+                                             └─► Deploy prod (optional, main only)  ─┘    every later one reads it
+                                                 resolve: tag, else build ref
 ```
 
 ## Plugin changes (0.2.0)
