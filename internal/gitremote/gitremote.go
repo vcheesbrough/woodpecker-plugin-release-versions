@@ -26,6 +26,11 @@ type Remote struct {
 // errors, and never in argv, where any process listing shows it. The header is
 // scoped to the remote's URL, so a redirect or another host never receives
 // it, and it is appended after any GIT_CONFIG_* entries CI already set.
+//
+// An empty value first clears any extra headers git already collected: the
+// workspace is often a checkout whose .git/config holds the CI's own
+// Authorization header (actions/checkout does this), and GitHub refuses a
+// request carrying two.
 func (r Remote) command(dir string, args ...string) *exec.Cmd {
 	cmd := exec.Command("git", append([]string{"-c", "safe.directory=*"}, args...)...)
 	if dir != "" {
@@ -38,10 +43,13 @@ func (r Remote) command(dir string, args ...string) *exec.Cmd {
 	if r.Token != "" {
 		n, _ := strconv.Atoi(os.Getenv("GIT_CONFIG_COUNT"))
 		basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + r.Token))
+		key := "http." + r.URL + ".extraHeader"
 		env = append(env,
-			fmt.Sprintf("GIT_CONFIG_COUNT=%d", n+1),
-			fmt.Sprintf("GIT_CONFIG_KEY_%d=http.%s.extraHeader", n, r.URL),
-			fmt.Sprintf("GIT_CONFIG_VALUE_%d=Authorization: Basic %s", n, basic),
+			fmt.Sprintf("GIT_CONFIG_COUNT=%d", n+2),
+			fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", n, key),
+			fmt.Sprintf("GIT_CONFIG_VALUE_%d=", n),
+			fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", n+1, key),
+			fmt.Sprintf("GIT_CONFIG_VALUE_%d=Authorization: Basic %s", n+1, basic),
 		)
 	}
 	cmd.Env = env
