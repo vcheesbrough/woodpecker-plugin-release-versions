@@ -21,7 +21,7 @@ inputs:
   registry_password:
     required: false
   environments:
-    description: JSON map of deploy targets to {"branches":[...]}; default dev from any branch, prod from main
+    description: JSON map of deploy targets to {"branches":[...]}; default dev from any branch, prod from the repo's default branch
     required: false
   deploy_target:
     description: The environment being deployed (resolve, tag); usually the job's environment name

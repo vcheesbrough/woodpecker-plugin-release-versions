@@ -179,7 +179,7 @@ All state lives in git and the registry; the plugin is a container reading envir
 | Concern | Woodpecker | GitHub Actions |
 | --- | --- | --- |
 | Run the plugin | `image:` step with `settings:` | container action, `uses: vcheesbrough/woodpecker-plugin-release-versions@<version>` (needs an `action.yml`) |
-| Commit, branch, run id | `CI_COMMIT_SHA`, `CI_COMMIT_BRANCH`, `CI_PIPELINE_NUMBER` | `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_RUN_ID` when `GITHUB_ACTIONS=true` |
+| Commit, branch, run id | `CI_COMMIT_SHA`, `CI_COMMIT_BRANCH`, `CI_PIPELINE_NUMBER` | `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT` when `GITHUB_ACTIONS=true` (each attempt claims its own number) |
 | Deploy target | `CI_PIPELINE_DEPLOY_TARGET` | the job's `environment:` name, passed as `deploy_target` |
 | Share `.release-tag` | shared workspace | job `outputs:`, or each job re-runs `resolve` |
 | Build, dev, prod | three runs | one workflow, three jobs with `needs:`; GitHub Environments give an approval gate before prod |

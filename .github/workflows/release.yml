@@ -69,7 +69,8 @@ jobs:
           build-args: |
             RELEASE_TAG=${{ needs.compute.outputs.release_tag }}
           # source links the ghcr package to this repo; version and revision
-          # are the labels the plugin itself checks.
+          # follow the plugin's own label convention (this workflow never runs
+          # publish, so nothing checks them here).
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=${{ needs.compute.outputs.release_tag }}
