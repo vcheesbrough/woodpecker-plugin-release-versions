@@ -7,12 +7,12 @@ Donor repos: bored, v-note, sovereign-config, code-vitals.
 
 ## Summary
 
-Every repo builds once per push and gets version `MAJOR.MINOR.<next number in sequence>`. That one image is promoted unchanged to dev and then prod. The git tag is written by the first successful deploy, so a commit is pinned to one build forever and prod only ever runs a tagged version. All of the versioning, lookup, policy and tagging logic moves into this plugin; each repo keeps only its own `docker build`, tests and deploy commands.
+Every repo builds once per push and gets version `MAJOR.MINOR.<next number in sequence>`. That one image is promoted unchanged to dev and prod, in either order. The git tag is written by the first successful deploy, so a commit is pinned to one build forever and prod only ever runs a tagged version. All of the versioning, lookup, policy and tagging logic moves into this plugin; each repo keeps only its own `docker build`, tests and deploy commands.
 
 Decisions (all made by Vincent):
 
 1. **A git tag means "this build was deployed"** (bored's rule), written on the first successful deploy to any environment. v-note and sovereign-config stop tagging on push.
-2. **Dev before prod is optional.** When a commit has been on dev, prod must deploy that same build; the tag dev wrote guarantees it. A per-environment setting can still force dev first, off by default.
+2. **Deploy order is free.** Dev may come before prod, after it, or not at all, and there is no setting to force an order. Whichever deploys a commit first writes the tag, and every later deploy reuses that build.
 3. **Environment policy lives in the plugin, with an escape hatch:** the release rules are fixed; which environments a repo has, and which branches may deploy to each, is one per-repo `environments` setting.
 4. **Sequential versions:** patch numbers are a gap-free per-line counter, not `CI_PIPELINE_NUMBER`.
 5. **No `:commit-<sha>` docker tags:** a deploy finds a commit's build through git build refs.
@@ -42,7 +42,7 @@ One rule ties it together: a commit runs under exactly one version, chosen by it
 | Deploy | A manual Woodpecker deployment to a target. Never builds. Resolves the build, verifies the revision label equals the commit, runs the repo's deploy steps, then tags. |
 | Resolve | Commit has a release tag → deploy that version. Otherwise take the commit's build refs, newest first, and deploy the first whose image is in the registry (failed builds never published, so are skipped). More than one tag on a commit is an error. |
 | Git tag | Annotated tag `<version>`, byte-identical to the docker tag, pushed only after a successful deploy and smoke tests. Idempotent on redeploy; refuses a second tag on a commit or a tag moving commits. |
-| Prod | Only from allowed branches (default `main`). Reuses dev's build through its tag if dev ran the commit; otherwise takes the latest green build and writes the tag itself. |
+| Prod | Only from allowed branches (default `main`). Dev is optional and may come before or after prod. Whichever deploys the commit first takes its latest green build and writes the tag; every later deploy, dev or prod, reuses that build through the tag. |
 | Feature branches | May deploy to any pre-prod target; that tags the branch commit. With merge commits or fast-forward, prod can promote the same build; a squash merge makes a new commit needing its own build. |
 
 ## How steps share the version
@@ -100,7 +100,7 @@ Woodpecker has no gated multi-stage run like Azure DevOps. The equivalent is thr
 | `major_minor_file` | version | per source | `Cargo.toml` |
 | `images` (new) | publish, resolve | required | `[registry.desync.link/sovereign-config, registry.desync.link/sovereign-config-cli]` |
 | `registry_username`, `registry_password` (new) | publish, resolve | required | from_secret |
-| `environments` (new) | resolve | `dev` any branch, `prod` from `main` | `{dev: {}}` for v-note; `{dev: {}, staging: {branches: [main]}, prod: {branches: [main], require_tag: true}}` |
+| `environments` (new) | resolve | `dev` any branch, `prod` from `main` | `{dev: {}}` for v-note; `{dev: {}, staging: {branches: [main]}, prod: {branches: [main]}}`; only `branches` per entry, deliberately no ordering option |
 | `github_token` | version, resolve, tag | required | from_secret |
 | `tag_prefix`, `dry_run` | all | `""`, `false` | |
 
