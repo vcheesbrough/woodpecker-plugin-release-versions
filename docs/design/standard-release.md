@@ -41,7 +41,7 @@ One rule ties it together: a commit runs under exactly one version, chosen by it
 | Build | One push pipeline = one version = one set of images, built, tested, published as `<repo>:<version>` only. Publishing an existing version is refused. Images carry `org.opencontainers.image.version` and `.revision` labels. |
 | Deploy | A manual Woodpecker deployment to a target. Never builds. Resolves the build, verifies the revision label equals the commit, runs the repo's deploy steps, then tags. |
 | Resolve | Commit has a release tag → deploy that version. Otherwise take the commit's build refs, newest first, and deploy the first whose image is in the registry (failed builds never published, so are skipped). More than one tag on a commit is an error. |
-| Git tag | Annotated tag `<version>`, byte-identical to the docker tag, pushed only after a successful deploy and smoke tests. Idempotent on redeploy; refuses a second tag on a commit or a tag moving commits. |
+| Git tag | Annotated tag `<version>`, byte-identical to the docker tag, pushed once the deploy steps succeed, whatever the smoke tests later find. Idempotent on redeploy; refuses a second tag on a commit or a tag moving commits. |
 | Prod | Only from allowed branches (default `main`). Dev is optional and may come before or after prod. Whichever deploys the commit first takes its latest green build and writes the tag; every later deploy, dev or prod, reuses that build through the tag. |
 | Feature branches | May deploy to any pre-prod target; that tags the branch commit. With merge commits or fast-forward, prod can promote the same build; a squash merge makes a new commit needing its own build. |
 
@@ -60,7 +60,7 @@ Woodpecker cannot pass a variable between steps, so the version always travels i
 Tests stay in each repo; the plugin fixes the two gates around them.
 
 1. **Before `publish`** (build pipeline): build, then every test (unit, lint, Dockerfile test stages, e2e, `checks` workflows). `publish` runs only when all are green, so the registry holds tested builds only.
-2. **Before `tag`** (deploy pipeline): `resolve`, deploy, live smoke tests. `tag` runs only when they pass; a failed smoke leaves the commit untagged.
+2. **Around `tag`** (deploy pipeline): `resolve`, deploy, then `tag` as soon as the deploy steps succeed. Live smoke tests run beside it: a failure fails the pipeline but the commit stays tagged, because that build was deployed, just broken, as if manual QA had found the bug. Only a failed deploy step leaves the commit untagged.
 
 ## When a build fails
 
@@ -89,7 +89,7 @@ Woodpecker has no gated multi-stage run like Azure DevOps. The equivalent is thr
 | `version` | push, manual | Reads `MAJOR.MINOR`, claims the next number via `refs/builds/<version>` (retry on clash), writes `.release-tag`. Refuses deployment events. | compute-release-tag / ci-release-tag / release-version compute |
 | `publish` | push, manual, after tests | Pushes each locally built image as `:<version>`; refuses if it exists or the registry cannot answer; checks labels first. | publish-release-image, check-image-metadata, sovereign-config promote |
 | `resolve` | deployment | Checks target and branch against `environments`, finds the release tag or newest published build ref, verifies revision labels, writes `.release-tag`. | find-commit-tag, resolve-deploy-tag, validate-deployment, verify-image |
-| `tag` | deployment, after deploy and smoke | Pushes the annotated git tag; no-op if already there. `push-tag` kept as an alias. | push-tag, release-version push-tag, tag-release |
+| `tag` | deployment, after the deploy steps | Pushes the annotated git tag; no-op if already there. `push-tag` kept as an alias. | push-tag, release-version push-tag, tag-release |
 
 `compute` and `validate` are removed (`compute` is the collision-prone mode; `validate` only served it).
 
@@ -168,6 +168,8 @@ steps:
     settings:
       mode: tag
       github_token: { from_secret: github_token }
+  smoke:            # repo-specific; beside tag: a failure fails the pipeline, never the tag
+    depends_on: [deploy-dev, deploy-prod]
 ```
 
 App-specific deploy scripts (e.g. bored's `deploy-app.sh`) are out of scope.
@@ -192,7 +194,7 @@ The plugin refuses bad releases, but only at run time. An agent that does not kn
 | --- | --- |
 | Load when | Wiring or changing a repo's build or deploy pipeline; adding an image or environment; deploying a version; answering which version runs where; migrating a repo; taking a product to `1.0.0`. |
 | The contract | The Semantics rules in agent terms: one build per push, promote and never rebuild, the first successful deploy writes the tag, the plugin owns `PATCH`. |
-| Never | Create, move or delete a release tag or `refs/builds/*` by hand; set `PATCH` in a manifest; rebuild or retag an image to deploy it; push `:latest` or `:commit-<sha>`; tag on push; let `tag` run before the smoke tests. |
+| Never | Create, move or delete a release tag or `refs/builds/*` by hand; set `PATCH` in a manifest; rebuild or retag an image to deploy it; push `:latest` or `:commit-<sha>`; tag on push; make `tag` wait for the smoke tests (a broken deploy is still a deploy). |
 | Pipeline templates | `references/woodpecker-build.yml`, `references/woodpecker-deploy.yml`, `references/github-actions.yml`: the donor pipelines above, pinned to a plugin version. |
 | Operating it | Deploy = a Woodpecker deployment for a commit and target, then `ci-watch` on that pipeline. Which version is where: `git tag --points-at <sha>` for deployed, `git ls-remote origin 'refs/builds/*'` for built. |
 | Refusals | Each `version`, `publish`, `resolve` and `tag` refusal, with its cause and fix (no green build, branch not allowed, second tag, revision label mismatch, image pruned). Plugin error messages name the section to read. |
