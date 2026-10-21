@@ -2,8 +2,14 @@ package gitremote
 
 import (
 	"encoding/base64"
+	"net/http"
+	"net/http/cgi"
+	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/vcheesbrough/woodpecker-plugin-release-versions/internal/testgit"
@@ -116,9 +122,11 @@ func TestCommandScopesTheTokenAndKeepsInheritedConfig(t *testing.T) {
 		}
 	}
 	want := []string{
-		"GIT_CONFIG_COUNT=2",
+		"GIT_CONFIG_COUNT=3",
 		"GIT_CONFIG_KEY_1=http.https://github.com/owner/repo.git.extraHeader",
-		"GIT_CONFIG_VALUE_1=Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:s3cret")),
+		"GIT_CONFIG_VALUE_1=", // clears headers from the checkout's own config
+		"GIT_CONFIG_KEY_2=http.https://github.com/owner/repo.git.extraHeader",
+		"GIT_CONFIG_VALUE_2=Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:s3cret")),
 	}
 	for _, kv := range want {
 		if !slices.Contains(cmd.Env, kv) {
@@ -143,6 +151,55 @@ func TestCommandWithoutTokenAddsNoHeader(t *testing.T) {
 	for _, kv := range cmd.Env {
 		if strings.HasPrefix(kv, "GIT_CONFIG_COUNT=") && kv != "GIT_CONFIG_COUNT=" {
 			t.Fatalf("set %s without a token", kv)
+		}
+	}
+}
+
+// Regression: the release workflow failed with GitHub's "Duplicate header:
+// Authorization" because actions/checkout stores its own header in the
+// workspace's .git/config and the plugin added a second. This serves a real
+// repository over smart HTTP and records what git actually sends.
+func TestOnlyThePluginsAuthorizationHeaderIsSent(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	repo := testgit.New(t)
+
+	var mu sync.Mutex
+	var seen [][]string
+	backend := &cgi.Handler{
+		Path: gitPath,
+		Args: []string{"http-backend"},
+		Env:  []string{"GIT_PROJECT_ROOT=" + filepath.Dir(repo.Remote), "GIT_HTTP_EXPORT_ALL=1"},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Values("Authorization"))
+		mu.Unlock()
+		backend.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	// A checkout like actions/checkout leaves behind, with its own header.
+	repo.Git(repo.Work, "config", "http."+srv.URL+"/.extraheader", "AUTHORIZATION: basic Y2hlY2tvdXQ=")
+	t.Chdir(repo.Work)
+
+	remote := Remote{URL: srv.URL + "/" + filepath.Base(repo.Remote), Token: "plugin-token"}
+	refs, err := remote.ListRefs("refs/heads/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) == 0 {
+		t.Fatal("no refs listed over HTTP")
+	}
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:plugin-token"))
+	if len(seen) == 0 {
+		t.Fatal("server saw no requests")
+	}
+	for i, headers := range seen {
+		if len(headers) != 1 || headers[0] != want {
+			t.Fatalf("request %d sent Authorization %q, want exactly [%q]", i, headers, want)
 		}
 	}
 }
